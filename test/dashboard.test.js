@@ -24,6 +24,15 @@ test("runtime output correlates a single configured remote destination", () => {
   assert.equal(result.destination, "Central-Log");
 });
 
+test("SMB and unknown device families use the fixed allowlist", () => {
+  const smb = loggingStatusInternals.deviceProfile({ type: "simple-gateway", "allow-smb": true });
+  const unknown = loggingStatusInternals.deviceProfile({ type: "cloudguard-gateway", hardware: "Maestro Orchestrator" });
+  assert.equal(smb.id, "smb");
+  assert.match(smb.script, /netstat -tnp/);
+  assert.equal(unknown.id, "unknown");
+  assert.equal(loggingStatusInternals.parseRuntime("NO_FW_LOG_CONNECTION", "", ["Central-Log"], smb).state, "disconnected");
+});
+
 test("history records only meaningful firewall state deltas", () => {
   const before = [{ name: "gw-a", local: false, primary: "Log-A", secondary: [], backup: [], destination: "Log-A", runtimeState: "connected", mode: "off-box" }];
   const after = [{ ...before[0], local: true, mode: "local" }];

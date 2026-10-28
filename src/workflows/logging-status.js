@@ -4,7 +4,13 @@ const FIREWALL_TYPES = new Set([
   "cloudguard-gateway"
 ]);
 
-const RUNTIME_SCRIPT = "cpstat -f log_connection fw";
+const GAIA_RUNTIME_SCRIPT = "cpstat -f log_connection fw";
+const SMB_RUNTIME_SCRIPT = "netstat -tnp | grep ':257' | grep fw || echo 'NO_FW_LOG_CONNECTION'";
+const DEVICE_PROFILES = {
+  gaia: { id: "gaia", family: "Gaia gateway / cluster", label: "cpstat log connection", script: GAIA_RUNTIME_SCRIPT },
+  smb: { id: "smb", family: "SMB / Quantum Spark", label: "netstat TCP/257", script: SMB_RUNTIME_SCRIPT },
+  unknown: { id: "unknown", family: "Unsupported / unknown", label: "No runtime probe", script: "" }
+};
 const SHOW_COMMANDS = {
   "simple-gateway": "show-simple-gateway",
   "simple-cluster": "show-simple-cluster",
@@ -27,6 +33,18 @@ function references(value) {
 
 function text(value) {
   return String(value || "").trim();
+}
+
+function isTrue(value) {
+  return value === true || String(value).toLowerCase() === "true";
+}
+
+function deviceProfile(gateway) {
+  const fingerprint = [gateway.type, gateway["allow-smb"], gateway.hardware, gateway.platform, gateway["platform-name"], gateway.version, gateway["os-name"], gateway["product-name"]].map(text).join(" ").toLowerCase();
+  if (isTrue(gateway["allow-smb"]) || /\b(?:smb|quantum\s+spark|spark)\b/.test(fingerprint)) return DEVICE_PROFILES.smb;
+  if (/\b(?:maestro|scalable|hyperscale|chassis)\b/.test(fingerprint)) return DEVICE_PROFILES.unknown;
+  if (gateway.type === "simple-gateway" || gateway.type === "simple-cluster") return DEVICE_PROFILES.gaia;
+  return DEVICE_PROFILES.unknown;
 }
 
 function configuredStatus(gateway) {
@@ -57,14 +75,23 @@ function runtimeDestination(output, configuredDestinations = []) {
     if (exact) return exact;
     if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(candidate)) return candidate;
   }
+  const tcp257 = raw.match(/\b(?:\d{1,3}\.){3}\d{1,3}:257\b/);
+  if (tcp257) return tcp257[0].slice(0, -4);
   const ips = raw.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || [];
   if (ips.length === 1) return ips[0];
   return "";
 }
 
-function parseRuntime(output, error = "", configuredDestinations = []) {
+function parseRuntime(output, error = "", configuredDestinations = [], profile = DEVICE_PROFILES.gaia) {
   const raw = text(output);
   if (error) return { state: "unavailable", detail: text(error), raw, destination: "" };
+  if (profile.id === "smb") {
+    if (/NO_FW_LOG_CONNECTION/.test(raw)) return { state: "disconnected", detail: "SMB appliance has no active fw connection to TCP/257.", raw, destination: "" };
+    if (!raw) return { state: "unknown", detail: "The SMB appliance did not return TCP/257 connection output.", raw, destination: "" };
+    const destination = runtimeDestination(raw, configuredDestinations);
+    const correlatedDestination = configuredDestinations.length === 1 ? configuredDestinations[0] : destination;
+    return { state: "connected", detail: correlatedDestination ? "SMB appliance reported an active fw connection to TCP/257." : "SMB appliance reported an active fw connection; target was not identified.", raw, destination: correlatedDestination };
+  }
   if (!raw) return { state: "unknown", detail: "The gateway did not return log-connection output.", raw, destination: "" };
   const lower = raw.toLowerCase();
   const destination = runtimeDestination(raw, configuredDestinations);
@@ -136,16 +163,19 @@ export async function collectLoggingStatus({ sessions, sessionId, context = "pri
     let configurationError = "";
     if (command && gateway.uid) {
       try {
-        detail = await sessions.command(sessionId, command, { uid: gateway.uid, "details-level": "full" }, context);
+        detail = { ...gateway, ...await sessions.command(sessionId, command, { uid: gateway.uid, "details-level": "full" }, context) };
       } catch (error) {
         configurationError = "Could not retrieve full logging configuration; using inventory data.";
       }
     }
+    const profile = deviceProfile(detail);
     rows.push({
       domain: text(domain),
       name: text(gateway.name) || text(detail.name) || "Unnamed firewall",
       type: text(gateway.type) || text(detail.type) || "gateway",
       uid: text(gateway.uid),
+      deviceFamily: profile.family,
+      probe: { id: profile.id, label: profile.label, command: profile.script },
       ...configuredStatus(detail),
       configurationError,
       runtime: { state: "not checked", detail: "Runtime probe was not requested.", raw: "", destination: "" }
@@ -153,24 +183,36 @@ export async function collectLoggingStatus({ sessions, sessionId, context = "pri
   }
 
   if (includeRuntime && rows.length) {
-    const runResult = await sessions.runScript(sessionId, {
-      "script-name": "check-log-connection",
-      script: RUNTIME_SCRIPT,
-      targets: rows.map((row) => row.name)
-    }, context);
-    const executions = executionsByTarget(runResult);
+    const groups = new Map();
     for (const row of rows) {
-      const execution = executions.get(row.name);
-      row.runtime = execution
-        ? parseRuntime(execution.output || execution.message, execution.error, row.remoteDestinations)
-        : { state: "unknown", detail: "No per-gateway task result was returned.", raw: "", destination: "" };
+      if (!row.probe.command) {
+        row.runtime = { state: "unknown", detail: "No approved runtime probe is available for this device family. Configuration is still shown.", raw: "", destination: "" };
+        continue;
+      }
+      if (!groups.has(row.probe.id)) groups.set(row.probe.id, []);
+      groups.get(row.probe.id).push(row);
+    }
+    for (const [profileId, targets] of groups) {
+      const profile = DEVICE_PROFILES[profileId];
+      try {
+        const runResult = await sessions.runScript(sessionId, { "script-name": `check-log-connection-${profileId}`, script: profile.script, targets: targets.map((row) => row.name) }, context);
+        const executions = executionsByTarget(runResult);
+        for (const row of targets) {
+          const execution = executions.get(row.name);
+          row.runtime = execution
+            ? parseRuntime(execution.output || execution.message, execution.error, row.remoteDestinations, profile)
+            : { state: "unknown", detail: "No per-gateway task result was returned.", raw: "", destination: "" };
+        }
+      } catch (error) {
+        for (const row of targets) row.runtime = { state: "unavailable", detail: `Runtime probe could not run: ${error.message}`, raw: "", destination: "" };
+      }
     }
   }
 
   return {
     checkedAt: new Date().toISOString(),
     scanDurationMs: Date.now() - startedAt,
-    runtimeCommand: includeRuntime ? RUNTIME_SCRIPT : "",
+    runtimeCommand: includeRuntime ? "Device-aware Gaia / SMB probes" : "",
     count: rows.length,
     logServers: summarizeLogServers(rows),
     firewalls: rows
@@ -198,7 +240,7 @@ export async function collectAllDomainLoggingStatus({ sessions, sessionId, inclu
   return {
     checkedAt: new Date().toISOString(),
     scanDurationMs: Date.now() - startedAt,
-    runtimeCommand: includeRuntime ? RUNTIME_SCRIPT : "",
+    runtimeCommand: includeRuntime ? "Device-aware Gaia / SMB probes" : "",
     count: firewalls.length,
     domains: root.domains,
     domainFailures,
@@ -207,4 +249,4 @@ export async function collectAllDomainLoggingStatus({ sessions, sessionId, inclu
   };
 }
 
-export const loggingStatusInternals = { configuredStatus, parseRuntime, references, runtimeDestination, summarizeLogServers };
+export const loggingStatusInternals = { configuredStatus, deviceProfile, parseRuntime, references, runtimeDestination, summarizeLogServers, DEVICE_PROFILES };

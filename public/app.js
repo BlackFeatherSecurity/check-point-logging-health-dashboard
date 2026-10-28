@@ -112,7 +112,7 @@ function appendDomainFailures(failures = []) {
 function filteredRows() {
   const query = firewallSearch.value.trim().toLowerCase();
   return latestRows.filter((row) => {
-    const haystack = [row.domain, row.name, row.type, row.primary, ...(row.secondary || []), ...(row.backup || []), row.runtime?.destination].join(" ").toLowerCase();
+    const haystack = [row.domain, row.name, row.type, row.deviceFamily, row.probe?.label, row.primary, ...(row.secondary || []), ...(row.backup || []), row.runtime?.destination].join(" ").toLowerCase();
     const matchesQuery = !query || haystack.includes(query);
     const filter = firewallFilter.value;
     const matchesFilter = filter === "all" || (filter === "attention" && needsAttention(row)) || (filter === "off-box" && !row.local && row.destinations?.length) || (filter === "local" && row.local);
@@ -127,8 +127,8 @@ function csvEscape(value) {
 
 function exportCsv() {
   const rows = filteredRows();
-  const headings = ["Domain", "Firewall", "Type", "Primary log server", "Secondary log servers", "Backup log servers", "Current destination", "Logging location", "Connection state", "Checked at"];
-  const lines = [headings, ...rows.map((row) => [row.domain, row.name, row.type, row.primary, (row.secondary || []).join("; "), (row.backup || []).join("; "), row.runtime?.destination, locationLabel(row), statusLabel(row.runtime), latestCheckedAt])]
+  const headings = ["Domain", "Firewall", "Object type", "Device family", "Runtime probe", "Primary log server", "Secondary log servers", "Backup log servers", "Current destination", "Logging location", "Connection state", "Checked at"];
+  const lines = [headings, ...rows.map((row) => [row.domain, row.name, row.type, row.deviceFamily, row.probe?.label, row.primary, (row.secondary || []).join("; "), (row.backup || []).join("; "), row.runtime?.destination, locationLabel(row), statusLabel(row.runtime), latestCheckedAt])]
     .map((row) => row.map(csvEscape).join(","));
   const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
@@ -219,6 +219,19 @@ function render(rows) {
     type.textContent = row.type.replaceAll("-", " ");
     firewall.append(name, type);
     tr.append(firewall);
+    tr.append(cell(row.deviceFamily || "Unknown device family"));
+    const probe = document.createElement("td");
+    const probeLabel = document.createElement("span");
+    probeLabel.className = `probe-badge ${row.probe?.id || "unknown"}`;
+    probeLabel.textContent = row.probe?.label || "No runtime probe";
+    probe.append(probeLabel);
+    if (row.probe?.command) {
+      const command = document.createElement("code");
+      command.className = "probe-command";
+      command.textContent = row.probe.command;
+      probe.append(command);
+    }
+    tr.append(probe);
     tr.append(cell(row.primary));
     tr.append(cell(listText(row.secondary)));
     tr.append(cell(listText(row.backup)));
