@@ -1,0 +1,24 @@
+services:
+  check-point-log-status:
+    build: .
+    container_name: check-point-log-status
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      RUN_SCRIPT_CONCURRENCY: 4
+      LARGE_ENVIRONMENT_RUN_SCRIPT_CONCURRENCY: 2
+      HISTORY_DIR: /app/data
+    networks:
+      - proxy
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./data:/app/data
+
+networks:
+  proxy:
+    external: true

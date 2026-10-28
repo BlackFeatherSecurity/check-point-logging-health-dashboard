@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Check Point Log Status</title><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/workbench.css"></head>
+<body>
+  <main class="app log-app">
+    <section class="panel login-panel" id="loginCard">
+      <div>
+        <h1>Check Point log destination status</h1>
+        <p class="lede">Review every managed firewall’s configured logging destination, local logging setting, and current log-connection status in one place.</p>
+        <p class="security-note">Credentials create an in-memory Management API session only. This dashboard never saves them and has no change controls.</p>
+      </div>
+      <form id="loginForm" class="grid-form">
+        <label class="full-row">Management host type<select id="managementType" name="managementType"><option value="sms" selected>Security Management Server (SMS)</option><option value="mds">Multi-Domain Server (MDS) — one domain</option><option value="mds-all">Multi-Domain Server (MDS) — all domains</option></select></label>
+        <label class="full-row">Management host<input name="host" required placeholder="Hostname or IP address" autocomplete="url"></label>
+        <label>Port<input name="port" placeholder="443" inputmode="numeric"></label>
+        <label class="full-row">Username<input name="username" required autocomplete="username"></label>
+        <label class="full-row">Password<input name="password" required type="password" autocomplete="current-password"></label>
+        <label id="domainField" class="full-row hidden">MDS domain<input id="domain" name="domain" placeholder="CMA/domain name" autocomplete="off"><span>Scan this domain’s firewall fleet.</span></label>
+        <div id="allDomainsNote" class="mds-note full-row hidden" role="status"><strong>All-domain scan</strong><span>Active MDS domains will be discovered and scanned sequentially. Results are combined into one firewall table; domain failures remain visible.</span></div>
+        <label class="check-row full-row"><input name="ignoreTls" type="checkbox" checked> Allow self-signed certificate</label>
+        <label class="check-row large-env-row full-row"><input name="largeEnvironmentMode" type="checkbox"> Large environment mode <span>Lower API and Gaia task concurrency for large MDS or gateway estates.</span></label>
+        <div id="loginStatus" class="status-card full-row" role="status" aria-live="polite">Not connected.</div><button type="submit" class="primary">Connect securely</button>
+      </form>
+    </section>
+    <section class="workspace hidden" id="workspace">
+      <header class="topbar"><div><h1>Log destination status</h1><p class="topbar-description">Configuration and runtime telemetry are deliberately shown separately.</p></div><div class="actions"><span class="connection-chip" id="connectionLabel">Connected</span><button id="refreshButton" class="primary">Refresh status</button><button id="logoutButton">Log out</button></div></header>
+      <section class="status-legend" aria-label="Status meaning"><span><i class="status-dot off-box"></i>Off-box logging</span><span><i class="status-dot local"></i>Local logging</span><span><i class="status-dot unknown"></i>Needs review</span><span>Runtime probe: <code>cpstat -f log_connection fw</code></span></section>
+      <section class="attention-panel hidden" id="attentionPanel" aria-labelledby="attentionTitle" role="alert"><div><h2 id="attentionTitle">Logging needs attention</h2><p id="attentionText"></p></div><ul id="attentionList" class="attention-list"></ul></section>
+      <section class="panel change-summary hidden" id="changeSummary" aria-labelledby="changeSummaryTitle"><div class="summary-head"><div><h2 id="changeSummaryTitle">Change alerts</h2><p id="changeSummaryText"></p></div><span id="scanTiming" class="summary-total"></span></div><ul id="changeList" class="change-list"></ul></section>
+      <section class="panel server-summary hidden" id="serverSummary" aria-labelledby="serverSummaryTitle"><div class="summary-head"><div><h2 id="serverSummaryTitle">Log-server coverage</h2><p>Active firewall connections by current destination.</p></div><span id="serverSummaryTotal" class="summary-total"></span></div><div id="logServerChart" class="server-chart" aria-live="polite"></div></section>
+      <section class="panel status-panel"><div class="table-head"><div><h2>Managed firewalls</h2><p id="statusSubtitle">Connect to inspect logging configuration.</p></div><label class="runtime-toggle"><input id="runtimeToggle" type="checkbox" checked> Check live connection</label></div><div class="fleet-tools"><label class="search-field">Search firewalls<input id="firewallSearch" type="search" placeholder="Name or log server" autocomplete="off"></label><label>Status<select id="firewallFilter"><option value="all">All firewalls</option><option value="attention">Needs attention</option><option value="off-box">Off-box only</option><option value="local">Local logging</option></select></label><button id="exportButton" type="button" disabled>Export CSV</button></div><div id="loadingState" class="empty-state">No status has been collected yet.</div><div id="tableWrap" class="table-wrap" hidden><table class="fleet-table" id="firewallTable"><caption>All managed firewall logging destinations and runtime status</caption><thead><tr><th id="domainColumn" scope="col" hidden>Domain</th><th scope="col">Firewall</th><th scope="col">Primary log server</th><th scope="col">Secondary log server(s)</th><th scope="col">Backup log server(s)</th><th scope="col">Current destination</th><th scope="col">Logging location</th><th scope="col">Connection</th></tr></thead><tbody id="firewallList" aria-live="polite"></tbody></table></div></section>
+    </section>
+  </main><script src="/app.js"></script>
+</body>
+</html>
