@@ -1,0 +1,28 @@
+{
+  "title": "Logging Health Monitoring Commands",
+  "presets": [
+    {
+      "id": "log-server-storage",
+      "name": "Show Log Server Storage and Indexer Status",
+      "script": "export LC_ALL=C\nprintf \"\\n__LOG_VOLUME__\\n\"; if [ -n \"$FWDIR\" ]; then df -Pk -- \"$FWDIR/log\" 2>&1; fi\nprintf \"\\n__INDEX_VOLUME__\\n\"; if [ -n \"$RTDIR\" ]; then df -Pk -- \"$RTDIR/log_indexes\" 2>&1; fi\nprintf \"\\n__INDEXER__\\n\"; cpstat -f indexer mg 2>&1 || printf \"\\n__INDEXER_FAILED__\\n\"",
+      "risk": "safe",
+      "description": "Read filesystem usage and indexer status on a Gaia server with Logging & Status enabled.",
+      "tags": [
+        "Logging",
+        "Monitoring"
+      ]
+    },
+    {
+      "id": "cluster-member-logging-health",
+      "name": "Show Cluster Member Logging and Clock Health",
+      "script": "export LC_ALL=C\nprintf \"\\n__LOG_CONNECTION__\\n\"\ncpstat -f log_connection fw\nprintf \"\\n__CLOCK__\\n\"\nprintf \"__TIME_EPOCH__=\"; date -u +%s; printf \"\\n__NTP_ACTIVE__=\"; clish -c \"show ntp active\" 2>&1; printf \"\\n__NTP_CURRENT__=\"; clish -c \"show ntp current\" 2>&1\nprintf \"\\n__CLUSTER_STATE__\\n\"\ncphaprob state 2>&1 || true",
+      "risk": "safe",
+      "description": "Read a Gaia ClusterXL member’s log connections, UTC clock, NTP evidence, and local cluster state.",
+      "tags": [
+        "ClusterXL",
+        "Logging",
+        "Monitoring"
+      ]
+    }
+  ]
+}

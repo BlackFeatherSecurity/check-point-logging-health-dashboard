@@ -2,10 +2,11 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { SessionManager } from "./session-manager.js";
 import { collectAllDomainLoggingStatus, collectLoggingStatus } from "./workflows/logging-status.js";
 import { HistoryStore } from "./history-store.js";
+import { ScanScheduler } from "./scan-scheduler.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
@@ -22,6 +23,58 @@ const sessions = new SessionManager({
     : null
 });
 const history = new HistoryStore();
+
+const activeScans = new Set();
+const validatedScans = new Set();
+
+async function withScanLock(id, run) {
+  if (activeScans.has(id)) throw new Error("A scan is already in progress for this session.");
+  activeScans.add(id);
+  try {
+    return await run();
+  } finally {
+    activeScans.delete(id);
+  }
+}
+
+async function scanEnvironment(id, options = {}, owner = id) {
+  const scope = sessions.describe(id);
+  const includeRuntime = options.includeRuntime !== false;
+  const includeInfrastructure = true;
+  const context = options.context || "primary";
+  const scanOptions = {
+    sessions, sessionId: id, includeRuntime, includeInfrastructure, freshnessHorizon: options.freshnessHorizon
+  };
+  const result = scope.allDomains
+    ? await collectAllDomainLoggingStatus(scanOptions)
+    : await collectLoggingStatus({ ...scanOptions, context, managementDomain: scope.domain });
+  const ownerScope = sessions.describe(owner);
+  if (owner === id && includeRuntime && !result.domainFailures?.length) {
+    validatedScans.add(id);
+  }
+  const historyScope = createHash("sha256").update(JSON.stringify([
+    scope.baseUrl, scope.user === "API Key" ? ownerScope.sessionId : scope.user,
+    scope.domain, scope.allDomains ? "all-domains" : context, includeRuntime
+  ])).digest("hex");
+  try {
+    result.history = await history.record(result, historyScope);
+  } catch {
+    result.history = { unavailable: true, changes: [] };
+  }
+  return result;
+}
+
+const scheduler = new ScanScheduler({
+  enabled: process.env.ENABLE_SCHEDULED_SCANS === "true",
+  scan: (owner, horizon) => withScanLock(owner, async () => {
+    const temporary = await sessions.openScanSession(owner);
+    try {
+      return await scanEnvironment(temporary.sessionId, { freshnessHorizon: horizon }, owner);
+    } finally {
+      await sessions.logout(temporary.sessionId);
+    }
+  })
+});
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -78,21 +131,24 @@ async function handleApi(req, res) {
         result = sessions.describe(body.sessionId);
         break;
       case "/api/logging-status":
-        result = body.allDomains === true
-          ? await collectAllDomainLoggingStatus({
-            sessions,
-            sessionId: body.sessionId,
-            includeRuntime: body.includeRuntime !== false
-          })
-          : await collectLoggingStatus({
-            sessions,
-            sessionId: body.sessionId,
-            context: body.context || "primary",
-            includeRuntime: body.includeRuntime !== false
-          });
-        result.history = await history.record(result);
+        result = await withScanLock(body.sessionId, () => scanEnvironment(body.sessionId, body));
+        break;
+      case "/api/schedules/status":
+        sessions.describe(body.sessionId);
+        result = scheduler.status(body.sessionId);
+        break;
+      case "/api/schedules/start":
+        sessions.describe(body.sessionId);
+        if (!validatedScans.has(body.sessionId)) throw new Error("Complete a live scan before starting a schedule.");
+        result = scheduler.start(body.sessionId, body.interval, body.horizon);
+        break;
+      case "/api/schedules/stop":
+        sessions.describe(body.sessionId);
+        result = scheduler.stop(body.sessionId);
         break;
       case "/api/logout":
+        scheduler.stop(body.sessionId);
+        validatedScans.delete(body.sessionId);
         result = await sessions.logout(body.sessionId);
         break;
       default:

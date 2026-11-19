@@ -1,35 +1,233 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Check Point Log Status</title><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/workbench.css"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Review logging, time synchronization, and cluster-route health across your Check Point fleet.">
+  <meta name="theme-color" content="#eef2f7">
+  <title>Check Point Logging Health</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/workbench.css">
+  <script src="/app.js" defer></script>
+</head>
 <body>
-  <main class="app log-app">
-    <section class="panel login-panel" id="loginCard">
-      <div>
-        <h1>Check Point log destination status</h1>
-        <p class="lede">Review every managed firewall’s configured logging destination, local logging setting, and current log-connection status in one place.</p>
-        <p class="security-note">Credentials create an in-memory Management API session only. This dashboard never saves them and has no change controls.</p>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.8 20 6v5.7c0 4.2-3 7.6-8 9.5-5-1.9-8-5.3-8-9.5V6l8-3.2Z"/><path d="M7.5 12h2l1.4-2.7 2.1 5.4 1.4-2.7h2.1"/></svg>
+      </span>
+      <span class="brand-name">Check Point <strong>Logging Health</strong></span>
+      <span class="header-mode">Read-only scanner</span>
+    </div>
+  </header>
+
+  <main class="app log-app" id="main" tabindex="-1">
+    <section class="panel login-panel" id="loginCard" aria-labelledby="loginTitle">
+      <div class="login-intro">
+        <h1 id="loginTitle">Check Point <br>Logging Health</h1>
+        <p class="lede">Review where your gateways send logs, check their clocks, and compare routes across cluster members.</p>
+        <dl class="check-list">
+          <div><dt>Fleet logging</dt><dd>Configured destinations and local logging</dd></div>
+          <div><dt>Runtime probes</dt><dd>Live log connections on supported gateways</dd></div>
+          <div><dt>NTP &amp; time</dt><dd>Gateway UTC and log-server clock comparison</dd></div>
+          <div><dt>Cluster routes</dt><dd>Routing differences between Gaia cluster members</dd></div>
+        </dl>
+        <p class="security-note">Credentials are held in memory for the Management API session. Checks are read-only.</p>
       </div>
-      <form id="loginForm" class="grid-form">
-        <label class="full-row">Management host type<select id="managementType" name="managementType"><option value="sms" selected>Security Management Server (SMS)</option><option value="mds">Multi-Domain Server (MDS) — one domain</option><option value="mds-all">Multi-Domain Server (MDS) — all domains</option></select></label>
-        <label class="full-row">Management host<input name="host" required placeholder="Hostname or IP address" autocomplete="url"></label>
-        <label>Port<input name="port" placeholder="443" inputmode="numeric"></label>
-        <label class="full-row">Username<input name="username" required autocomplete="username"></label>
-        <label class="full-row">Password<input name="password" required type="password" autocomplete="current-password"></label>
-        <label id="domainField" class="full-row hidden">MDS domain<input id="domain" name="domain" placeholder="CMA/domain name" autocomplete="off"><span>Scan this domain’s firewall fleet.</span></label>
-        <div id="allDomainsNote" class="mds-note full-row hidden" role="status"><strong>All-domain scan</strong><span>Active MDS domains will be discovered and scanned sequentially. Results are combined into one firewall table; domain failures remain visible.</span></div>
-        <label class="check-row full-row"><input name="ignoreTls" type="checkbox" checked> Allow self-signed certificate</label>
-        <label class="check-row large-env-row full-row"><input name="largeEnvironmentMode" type="checkbox"> Large environment mode <span>Lower API and Gaia task concurrency for large MDS or gateway estates.</span></label>
-        <div id="loginStatus" class="status-card full-row" role="status" aria-live="polite">Not connected.</div><button type="submit" class="primary">Connect securely</button>
+
+      <form id="loginForm" class="grid-form" aria-labelledby="connectTitle">
+        <div class="form-heading full-row">
+          <h2 id="connectTitle">Connect to Management</h2>
+          <p>Use an account with access to the gateways and domains you want to check.</p>
+        </div>
+        <label class="full-row">Management type
+          <select id="managementType" name="managementType">
+            <option value="sms" selected>Security Management Server (SMS)</option>
+            <option value="mds">Multi-Domain Server (MDS) — one domain</option>
+            <option value="mds-all">Multi-Domain Server (MDS) — all domains</option>
+          </select>
+        </label>
+        <label>Management host
+          <input name="host" required placeholder="Hostname or IP address" autocomplete="url" spellcheck="false" autocapitalize="none">
+        </label>
+        <label>Port
+          <input name="port" placeholder="443" inputmode="numeric">
+        </label>
+        <label id="domainField" class="full-row hidden">MDS domain
+          <input id="domain" name="domain" placeholder="CMA or domain name" autocomplete="off" spellcheck="false">
+        </label>
+        <div id="allDomainsNote" class="mds-note full-row hidden">Active domains are scanned one at a time. Domain failures appear alongside the results.</div>
+        <label class="full-row">Username
+          <input name="username" required autocomplete="username" spellcheck="false" autocapitalize="none">
+        </label>
+        <label class="full-row">Password
+          <input name="password" required type="password" autocomplete="current-password">
+        </label>
+        <fieldset class="connection-options full-row">
+          <legend>Connection options</legend>
+          <label class="check-row">
+            <input name="ignoreTls" type="checkbox" checked aria-describedby="tlsHelp">
+            <span>Allow self-signed certificates<small id="tlsHelp">Skips Management certificate verification.</small></span>
+          </label>
+          <label class="check-row">
+            <input name="largeEnvironmentMode" type="checkbox" aria-describedby="largeEnvHelp">
+            <span>Large environment mode<small id="largeEnvHelp">Reduces parallel API requests and Gaia tasks.</small></span>
+          </label>
+        </fieldset>
+        <button type="submit" class="primary">Connect and scan</button>
+        <p id="loginStatus" class="login-status full-row" role="status"></p>
       </form>
     </section>
-    <section class="workspace hidden" id="workspace">
-      <header class="topbar"><div><h1>Log destination status</h1><p class="topbar-description">Configuration and runtime telemetry are deliberately shown separately.</p></div><div class="actions"><span class="connection-chip" id="connectionLabel">Connected</span><button id="refreshButton" class="primary">Refresh status</button><button id="logoutButton">Log out</button></div></header>
-      <section class="status-legend" aria-label="Status meaning"><span><i class="status-dot off-box"></i>Off-box logging</span><span><i class="status-dot local"></i>Local logging</span><span><i class="status-dot unknown"></i>Needs review</span><span>Runtime probes are selected by device family.</span></section>
-      <section class="attention-panel hidden" id="attentionPanel" aria-labelledby="attentionTitle" role="alert"><div><h2 id="attentionTitle">Logging needs attention</h2><p id="attentionText"></p></div><ul id="attentionList" class="attention-list"></ul></section>
-      <section class="panel change-summary hidden" id="changeSummary" aria-labelledby="changeSummaryTitle"><div class="summary-head"><div><h2 id="changeSummaryTitle">Change alerts</h2><p id="changeSummaryText"></p></div><span id="scanTiming" class="summary-total"></span></div><ul id="changeList" class="change-list"></ul></section>
-      <section class="panel server-summary hidden" id="serverSummary" aria-labelledby="serverSummaryTitle"><div class="summary-head"><div><h2 id="serverSummaryTitle">Log-server coverage</h2><p>Active firewall connections by current destination.</p></div><span id="serverSummaryTotal" class="summary-total"></span></div><div id="logServerChart" class="server-chart" aria-live="polite"></div></section>
-      <section class="panel status-panel"><div class="table-head"><div><h2>Managed firewalls</h2><p id="statusSubtitle">Connect to inspect logging configuration.</p></div><label class="runtime-toggle"><input id="runtimeToggle" type="checkbox" checked> Check live connection</label></div><div class="fleet-tools"><label class="search-field">Search firewalls<input id="firewallSearch" type="search" placeholder="Name, device family, or log server" autocomplete="off"></label><label>Status<select id="firewallFilter"><option value="all">All firewalls</option><option value="attention">Needs attention</option><option value="off-box">Off-box only</option><option value="local">Local logging</option></select></label><button id="exportButton" type="button" disabled>Export CSV</button></div><div id="loadingState" class="empty-state">No status has been collected yet.</div><div id="tableWrap" class="table-wrap" hidden><table class="fleet-table" id="firewallTable"><caption>All managed firewall logging destinations, device-specific runtime probes, and connection status</caption><thead><tr><th id="domainColumn" scope="col" hidden>Domain</th><th scope="col">Firewall</th><th scope="col">Device family</th><th scope="col">Runtime probe</th><th scope="col">Primary log server</th><th scope="col">Secondary log server(s)</th><th scope="col">Backup log server(s)</th><th scope="col">Current destination</th><th scope="col">Logging location</th><th scope="col">Connection</th></tr></thead><tbody id="firewallList" aria-live="polite"></tbody></table></div></section>
+
+    <section class="workspace hidden" id="workspace" aria-labelledby="workspaceTitle">
+      <header class="topbar">
+        <div>
+          <h1 id="workspaceTitle" tabindex="-1">Fleet health</h1>
+          <p class="connection-context" id="connectionLabel">Connected</p>
+        </div>
+        <div class="actions">
+          <button id="logoutButton" type="button">Log out</button>
+          <button id="refreshButton" class="primary" type="button">Refresh scan</button>
+        </div>
+      </header>
+
+      <div id="fleetHome" class="workspace-home">
+        <nav class="scan-navigation" aria-label="Scan results" id="scanNavigation" hidden>
+          <a href="#firewallTitle">Firewalls</a>
+          <a href="#managementSummary" id="managementLink">Management scope</a>
+          <a href="#serverSummary" id="serverLink" hidden>Log servers</a>
+          <a href="#changeSummary">Scan changes</a>
+          <a href="#scanSchedule" id="scheduleLink" hidden>Scheduled scans</a>
+          <a class="attention-link" href="#attentionPanel" id="attentionLink" hidden>Needs attention</a>
+        </nav>
+
+        <section class="panel status-panel" aria-labelledby="firewallTitle">
+          <div class="table-head">
+            <div>
+              <h2 id="firewallTitle" tabindex="-1">Managed firewalls</h2>
+              <p id="statusSubtitle">Waiting for scan results.</p>
+            </div>
+            <label class="runtime-toggle"><input id="runtimeToggle" type="checkbox" checked> Include live checks</label>
+          </div>
+          <div id="loadingState" class="empty-state" role="status">No scan results yet.</div>
+          <div class="fleet-views" role="group" aria-label="Firewall table view">
+            <button type="button" data-view="overview" aria-pressed="true">Overview</button>
+            <button type="button" data-view="logging" aria-pressed="false">Logging</button>
+            <button type="button" data-view="time" aria-pressed="false">NTP &amp; time</button>
+            <button type="button" data-view="routes" aria-pressed="false">Cluster routes</button>
+            <button type="button" data-view="all" aria-pressed="false">All checks</button>
+          </div>
+          <div class="fleet-tools">
+            <label class="search-field">Search firewalls
+              <input id="firewallSearch" type="search" placeholder="Firewall, domain, or log server" autocomplete="off">
+            </label>
+            <label>Status
+              <select id="firewallFilter">
+                <option value="all">All statuses</option>
+                <option value="attention">Needs attention</option>
+                <option value="off-box">Off-box only</option>
+                <option value="local">Local logging</option>
+              </select>
+            </label>
+            <label id="domainFilterField" hidden>Domain
+              <select id="domainFilter"><option value="">All domains</option></select>
+            </label>
+            <label id="destinationFilterField" hidden>Log server
+              <select id="destinationFilter"><option value="">All destinations</option></select>
+            </label>
+            <button id="exportButton" type="button" disabled>Export CSV</button>
+          </div>
+          <div id="tableScrollHint" class="table-scroll-hint" hidden>
+            <span>Scroll to see more columns</span>
+            <span class="table-scroll-actions">
+              <button id="tableScrollLeft" type="button" aria-controls="tableWrap">Earlier</button>
+              <button id="tableScrollRight" type="button" aria-controls="tableWrap">Later</button>
+            </span>
+          </div>
+          <div id="tableWrap" class="table-wrap" role="region" aria-label="Firewall scan results" tabindex="0" hidden>
+            <table class="fleet-table" id="firewallTable">
+              <caption>Firewall logging configuration, runtime probes, clock evidence, and cluster routes</caption>
+              <thead><tr>
+                <th id="domainColumn" scope="col" hidden>Domain</th>
+                <th scope="col">Firewall</th>
+                <th scope="col" data-views="overview logging time">Device family</th>
+                <th scope="col" data-views="overview time">NTP &amp; time</th>
+                <th scope="col" data-views="logging">Runtime probe</th>
+                <th scope="col" data-views="logging">Primary log server</th>
+                <th scope="col" data-views="logging">Secondary log servers</th>
+                <th scope="col" data-views="logging">Backup log servers</th>
+                <th scope="col" data-views="overview logging time">Current destination</th>
+                <th scope="col" data-views="overview logging">Logging location</th>
+                <th scope="col" data-views="overview logging">Connection</th>
+                <th scope="col" data-views="overview routes">Cluster routes</th>
+              </tr></thead>
+              <tbody id="firewallList"></tbody>
+            </table>
+          </div>
+          <div id="fleetEmpty" class="empty-state" role="status" hidden></div>
+          <p class="table-note">NTP is recommended. Firewall UTC is shown when the gateway returns it.</p>
+        </section>
+
+        <section class="attention-panel hidden" id="attentionPanel" aria-labelledby="attentionTitle">
+          <div class="summary-head">
+            <div><h2 id="attentionTitle">Needs attention</h2><p id="attentionText" role="status"></p></div>
+          </div>
+          <ul id="attentionList" class="attention-list"></ul>
+        </section>
+
+        <section class="panel hidden" id="managementSummary" aria-labelledby="managementTitle">
+          <div class="summary-head">
+            <div><h2 id="managementTitle">Management scope</h2><p id="managementSubtitle"></p></div>
+          </div>
+          <div class="scope-list" id="scopeList"></div>
+          <div class="scope-list" id="managementHealth"></div>
+        </section>
+
+        <section class="panel server-summary hidden" id="serverSummary" aria-labelledby="serverSummaryTitle">
+          <div class="summary-head">
+            <div><h2 id="serverSummaryTitle">Log-server coverage</h2><p>Configured destinations and active connections observed by the scan.</p></div>
+            <span id="serverSummaryTotal" class="summary-total"></span>
+          </div>
+          <div id="logServerChart" class="server-chart"></div>
+        </section>
+
+        <section class="panel change-summary hidden" id="changeSummary" aria-labelledby="changeSummaryTitle">
+          <div class="summary-head">
+            <div><h2 id="changeSummaryTitle">Changes since last scan</h2><p id="changeSummaryText"></p></div>
+            <span id="scanTiming" class="summary-total"></span>
+          </div>
+          <ul id="changeList" class="change-list"></ul>
+        </section>
+
+        <section class="panel hidden" id="scanSchedule" aria-labelledby="scheduleTitle">
+          <div class="summary-head">
+            <div><h2 id="scheduleTitle">Scheduled scans</h2><p>Run read-only checks for up to eight hours while this dashboard session is active.</p></div>
+          </div>
+          <form id="scheduleForm" class="schedule-form">
+            <label>Scan interval
+              <select name="interval"><option value="15">Every 15 minutes</option><option value="30">Every 30 minutes</option><option value="60">Every hour</option></select>
+            </label>
+            <label>Quiet-gateway lookback
+              <select name="horizon"><option value="last-hour">Last hour</option><option value="last-24-hours">Last 24 hours</option></select>
+            </label>
+            <button type="submit" class="primary">Start schedule</button>
+            <button id="stopSchedule" type="button" hidden>Stop schedule</button>
+          </form>
+          <p class="schedule-status" id="scheduleStatus" role="status"></p>
+          <ul class="attention-list" id="scheduleAlerts"></ul>
+        </section>
+      </div>
+
+      <section class="panel hidden" id="serverDetail" aria-labelledby="serverDetailTitle">
+        <a href="#serverSummary" class="detail-back">All log servers</a>
+        <div class="summary-head detail-heading">
+          <div><h2 id="serverDetailTitle" tabindex="-1">Log server health</h2><p id="serverDetailMeta"></p></div>
+        </div>
+        <p class="server-detail-status" id="serverDetailStatus" role="status"></p>
+        <div id="serverDetailContent"></div>
+      </section>
     </section>
-  </main><script src="/app.js"></script>
+  </main>
 </body>
 </html>

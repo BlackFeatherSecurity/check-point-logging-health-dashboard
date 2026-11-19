@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "check": "node --check src/server.js && node --check src/check-point-client.js && node --check src/session-manager.js && node --check src/history-store.js && node --check src/workflows/logging-status.js && node --check public/app.js && node --test"
+    "check": "node --check src/server.js && node --check src/check-point-client.js && node --check src/session-manager.js && node --check src/history-store.js && node --check src/workflows/logging-status.js && node --check src/workflows/infrastructure-health.js && node --check src/scan-scheduler.js && node --check public/app.js && node --test"
   },
   "engines": {
     "node": ">=18"

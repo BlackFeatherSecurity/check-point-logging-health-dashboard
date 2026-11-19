@@ -14,6 +14,10 @@ function compactRow(row) {
     backup: [...(row.backup || [])],
     destination: row.runtime?.destination || "",
     runtimeState: row.runtime?.state || "unknown",
+    timeState: row.time?.state || "not checked",
+    ntpEnabled: row.time?.ntpEnabled ?? null,
+    timeOffsetMs: row.time?.offsetMs ?? null,
+    routeState: row.routes?.state || "not checked",
     mode: row.mode || "not configured"
   };
 }
@@ -34,7 +38,7 @@ function changesBetween(previous = [], current = []) {
       continue;
     }
     const fields = [];
-    for (const key of ["local", "primary", "secondary", "backup", "destination", "runtimeState", "mode"]) {
+    for (const key of ["local", "primary", "secondary", "backup", "destination", "runtimeState", "timeState", "ntpEnabled", "timeOffsetMs", "routeState", "mode"]) {
       if (JSON.stringify(old[key]) !== JSON.stringify(row[key])) fields.push(key);
     }
     if (fields.length) changes.push({ firewall, kind: "changed", fields });
@@ -49,6 +53,7 @@ export class HistoryStore {
   constructor({ directory = process.env.HISTORY_DIR || "/tmp/check-point-log-status", filename = "scan-history.json" } = {}) {
     this.path = join(directory, filename);
     this.ready = null;
+    this.pending = Promise.resolve();
   }
 
   async load() {
@@ -67,22 +72,29 @@ export class HistoryStore {
     return this.ready;
   }
 
-  async record(result) {
-    const history = await this.load();
-    const rows = result.firewalls.map(compactRow);
-    const previous = history.snapshots.at(-1);
-    const changes = previous ? changesBetween(previous.firewalls, rows) : [];
-    const snapshot = { checkedAt: result.checkedAt, firewalls: rows };
-    history.snapshots = [...history.snapshots, snapshot].slice(-MAX_SNAPSHOTS);
-    const temporary = `${this.path}.${process.pid}.tmp`;
-    await writeFile(temporary, JSON.stringify(history), { mode: 0o600 });
-    await rename(temporary, this.path);
-    return {
-      baseline: !previous,
-      previousCheckedAt: previous?.checkedAt || "",
-      changes,
-      retainedScans: history.snapshots.length
-    };
+  async record(result, scope) {
+    if (result.domainFailures?.length) return { partial: true, changes: [] };
+
+    const write = this.pending.then(async () => {
+      const history = await this.load();
+      const rows = result.firewalls.map(compactRow);
+      const previous = [...history.snapshots].reverse().find(snapshot => snapshot.scope === scope);
+      const changes = previous ? changesBetween(previous.firewalls, rows) : [];
+      const snapshot = { scope, checkedAt: result.checkedAt, firewalls: rows };
+      const snapshots = [...history.snapshots, snapshot].slice(-MAX_SNAPSHOTS);
+      const temporary = `${this.path}.${process.pid}.tmp`;
+      await writeFile(temporary, JSON.stringify({ snapshots }), { mode: 0o600 });
+      await rename(temporary, this.path);
+      history.snapshots = snapshots;
+      return {
+        baseline: !previous,
+        previousCheckedAt: previous?.checkedAt || "",
+        changes,
+        retainedScans: snapshots.length
+      };
+    });
+    this.pending = write.catch(() => {});
+    return write;
   }
 }
 

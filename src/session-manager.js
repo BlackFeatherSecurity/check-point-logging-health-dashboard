@@ -85,6 +85,16 @@ function taskOutput(result) {
   return tasks.map((task) => task.statusDescription).filter(Boolean).join("\n");
 }
 
+function taskFinished(result) {
+  if (!result) return false;
+  const tasks = taskSummary(result);
+  return tasks.length > 0 && tasks.every(task => {
+    if (/^(?:succeeded|failed|partially succeeded|cancel(?:l)?ed|completed)$/i.test(task.status)) return true;
+    if (task.status !== "unknown") return false;
+    return task.executions.some(execution => execution.output || execution.message || execution.error);
+  });
+}
+
 function scriptResult(result) {
   return { result, output: taskOutput(result), taskSummary: taskSummary(result) };
 }
@@ -189,13 +199,30 @@ export class SessionManager {
     };
     this.sessions.set(id, session);
     if (allDomains) {
-      session.domains = await this.discoverDomains(id);
-      if (!session.domains.length) {
+      try {
+        session.domains = await this.discoverDomains(id);
+        if (!session.domains.length) throw new Error("No active MDS domains were available to this administrator.");
+      } catch (error) {
         await this.logout(id);
-        throw new Error("No active MDS domains were available to this administrator.");
+        throw error;
       }
     }
     return this.describe(session);
+  }
+
+  async openScanSession(id) {
+    const source = this.get(id);
+    return this.login({
+      ...source.auth,
+      host: source.baseClient.baseUrl,
+      ignoreTls: source.baseClient.rejectUnauthorized === false,
+      smart1Cloud: source.smart1Cloud,
+      mdsMode: source.mdsMode,
+      allDomains: source.allDomains,
+      domain: source.domain,
+      managementObjectName: source.managementObjectName,
+      largeEnvironmentMode: source.largeEnvironmentMode
+    });
   }
 
   async discoverDomains(id) {
@@ -305,19 +332,26 @@ export class SessionManager {
       await this.validateVersion(id, context, apiVersion);
       const client = this.client(id, context);
       const initial = await client.command("run-script", body, apiVersion);
-      if (taskOutput(initial)) return scriptResult(initial);
       const ids = taskIds(initial);
-      if (ids.length === 0) return scriptResult(initial);
+      if (ids.length === 0 || (taskOutput(initial) && taskFinished(initial))) return scriptResult(initial);
 
       let lastResult = initial;
+      const latestById = new Map();
       for (let attempt = 0; attempt < this.taskPollAttempts; attempt += 1) {
-        const results = await Promise.all(ids.map((taskId) => client.command("show-task", {
+        const pending = ids.filter(id => !taskFinished(latestById.get(id)));
+        const results = await Promise.allSettled(pending.map(taskId => client.command("show-task", {
           "task-id": taskId,
           "details-level": "full"
         }, apiVersion)));
-        lastResult = results[0] || lastResult;
-        const completed = results.find((result) => taskOutput(result));
-        if (completed) return scriptResult(completed);
+        const fulfilled = results.filter(result => result.status === "fulfilled");
+        if (!fulfilled.length && !latestById.size) throw results[0].reason;
+        for (const [index, result] of results.entries()) {
+          if (result.status === "fulfilled") latestById.set(pending[index], result.value);
+        }
+        const tasks = ids.flatMap(id => latestById.get(id)?.tasks || []);
+        const uniqueTasks = new Map(tasks.map((task, index) => [task["task-id"] || task.taskId || task.uid || index, task]));
+        lastResult = { ...lastResult, ...fulfilled[0]?.value, tasks: [...uniqueTasks.values()] };
+        if (ids.every(id => taskFinished(latestById.get(id)))) return scriptResult(lastResult);
         if (attempt < this.taskPollAttempts - 1) {
           const interval = session.largeEnvironmentMode
             ? this.largeEnvironmentTaskPollIntervalMs

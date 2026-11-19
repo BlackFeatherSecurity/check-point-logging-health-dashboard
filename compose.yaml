@@ -9,6 +9,7 @@ services:
       RUN_SCRIPT_CONCURRENCY: 4
       LARGE_ENVIRONMENT_RUN_SCRIPT_CONCURRENCY: 2
       HISTORY_DIR: /app/data
+      ENABLE_SCHEDULED_SCANS: "${ENABLE_SCHEDULED_SCANS:-false}"
     networks:
       - proxy
     security_opt:
